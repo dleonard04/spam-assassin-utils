@@ -1,0 +1,104 @@
+#!/usr/bin/perl
+################################################################################
+# pineab2sawhitelist
+#  Takes a pine .addressbook for a user and adds all addresses in it to that
+#  user's Spam Assassin whitelist.
+#
+#  Written by Andrew Sweger
+#  Updated and released by dleonard@dleonard.net
+#
+#  Copyright 2004 by Andrew Sweger
+#
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 1, or (at your option)
+#  any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software Foundation,
+#  Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
+################################################################################
+use strict;
+use Mail::Address;
+
+my $sa_user_prefs = "$ENV{HOME}/.spamassassin/user_prefs";
+my $addressbook = "$ENV{HOME}/.addressbook";
+
+# Parse the commandline
+while (scalar @ARGV) {
+ shift @ARGV;
+ if    (/^--user_prefs=(.*)/)  { $sa_user_prefs = $1 }
+ elsif (/^--addressbook=(.*)/) { $addressbook = $1 }
+ else                          { help() }
+}
+
+# Read in extant SpamAssassin whitelist_from entries
+my %sawhitelist = ();
+if (open SAprefs, $sa_user_prefs) {
+	while (<SAprefs>) {
+		next unless /^whitelist_from (.*)/;
+		$sawhitelist{$1}++;
+	}
+	close SAprefs;
+} else {
+	my $sa_dir = $sa_user_prefs;
+        $sa_dir =~ s#[^/]+$##;
+	if (! -d $sa_dir) {
+		die "$sa_dir does not exist or is unreadable.\n";
+	}	
+	
+	print STDERR "Unable to read SpamAssassin user_prefs [$sa_user_prefs].\n";
+}
+
+# Read in Pine addressbook and create list of new whitelist entries
+my @newaddrs = ();
+open(PAB, $addressbook) or die "Unable to read Pine addressbook\n";
+while (<PAB>) {
+	/([^\s]+\@[^\s]+)/;
+	my $line = $1;
+	for my $addr (Mail::Address->parse($line)) {
+		my $address = $addr->address();
+		next unless $address =~ /\@/;
+		unless (exists $sawhitelist{$address}) {
+			# Mark as seen so we don't end up with duplicates
+			$sawhitelist{$address} = 1;
+			push @newaddrs, $address;
+		}
+	}
+}
+close PAB;
+
+if (scalar @newaddrs) {
+	print "Adding addresses\n";
+	print "----------------\n";
+	print join "\n", @newaddrs;
+	print "\n";
+}
+
+# Always write out the user_prefs even if there aren't any new addresses
+# just in case there wasn't a user_prefs present.
+open(SAprefs, ">>$sa_user_prefs") or die "Can't open SpamAssassin user_prefs for writing: $!\n";
+foreach (@newaddrs) {
+	print SAprefs "whitelist_from $_\n";
+}
+close SAprefs;
+
+################################################################################
+# help
+################################################################################
+sub help {
+ print <<END;
+
+pineab2sawhitelist [--user_prefs=<file>] [--addressbook=<file>]
+ user_prefs default:  \$HOME/.spamassassin/user_prefs
+ addressbook default: \$HOME/.addressbook
+
+END
+
+exit;
+}
